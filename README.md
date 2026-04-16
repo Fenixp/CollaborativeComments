@@ -1,66 +1,49 @@
 # Collaborative Comments
 
-Initial scaffold for a self-hosted collaborative image review application built with SvelteKit, Convex, Docker Compose, and Clerk.
+A real-time collaborative image review tool. Upload images, drop pinned comments at exact coordinates, and see your teammates' cursors move live — all in the browser, no plugins required.
 
-This change intentionally stops at shell behavior:
+**Live app:** [davidcomments.eu](https://davidcomments.eu)
 
-- unauthenticated users see a login-focused screen
-- authenticated users see an empty application shell
-- Convex is configured for self-hosting and Clerk JWT validation
-- no upload, comment, image, or other product business logic is included
+---
 
-## Stack
+## How to use
 
-- **Frontend:** SvelteKit, TypeScript, Tailwind CSS v4, `adapter-node`
-- **UI foundation:** shadcn-svelte conventions, Lucide icons
-- **Backend:** self-hosted Convex with functions under `src/convex`
-- **Authentication:** Clerk browser SDK + custom Svelte auth bridge for Convex
-- **Infrastructure:** Docker Compose for frontend, Convex backend, Convex dashboard
+### Signing in
 
-## Directory structure
+Visit [davidcomments.eu](https://davidcomments.eu) and create an account or sign in. Each account is assigned a unique colour used to identify your comments and cursor to other collaborators.
 
-```text
-src/
-  convex/                 Convex configuration and future backend functions
-  lib/
-    auth/                 Clerk client and Svelte auth bridge
-    convex/               Browser Convex client bootstrap
-    components/
-      ui/                 shadcn-style primitives that stay generator-friendly
-      atoms/              Small app-owned visual building blocks
-      molecules/          Small composed UI units built from atoms/ui
-      organisms/          Larger composed sections
-      templates/          Route-level layout shells
-    features/
-      auth/               Domain-specific auth UI and orchestration
-  routes/
-    +layout.svelte        Global frontend bootstrap for Convex + auth
-    +page.svelte          Login shell or authenticated empty shell
-    account/+page.svelte  Protected-style account route with unauth fallback
-```
+### Uploading images
 
-## Environment files
+From the gallery, click **Upload** and select an image file (JPEG, PNG, GIF, WebP, etc., up to 2 MB). The image appears in the shared gallery immediately for everyone logged in.
 
-- Copy `.env.example` for local Docker usage.
-- Copy `.env.hosted.example` when preparing a reverse-proxied or hosted deployment.
+### Leaving comments
 
-Minimum required values:
+Open any image to enter the detail view. Click anywhere on the image to pin a comment at that spot. Comments are limited to 100 characters and are visible to all team members in real time.
 
-- `PUBLIC_CLERK_PUBLISHABLE_KEY`
-- `CLERK_JWT_ISSUER_DOMAIN`
-- `CONVEX_INSTANCE_SECRET` (must be an even-length hex string)
+### Live cursors
 
-Optional but commonly required later:
+While viewing the same image as your teammates, their cursors appear as colour-coded arrows labelled with their name. Cursors update continuously as people move around the image.
 
-- `CONVEX_SELF_HOSTED_ADMIN_KEY` for CLI sync and dashboard administration
+### Deleting images
 
-## Startup flow
+Images you uploaded can be deleted from the gallery view. Deletion removes the image along with all its comments.
 
-1. Copy `.env.example` to `.env` and replace the placeholder secrets.
-2. Create a Clerk application and enable Clerk's Convex integration so the `convex` JWT template is available.
-3. Start the stack with Docker Compose.
-4. Generate an admin key from the running backend container.
-5. Export `CONVEX_SELF_HOSTED_URL` and `CONVEX_SELF_HOSTED_ADMIN_KEY` locally when you want to run `convex dev` or `convex deploy`.
-6. Open the frontend at `http://localhost:3000` and the dashboard at `http://localhost:6791`.
+### Account settings
 
-See `docs/self-hosting.md` for the detailed self-hosted workflow and `docs/architecture.md` for frontend layering rules.
+Click your avatar in the top bar to reach account settings, where you can manage your profile.
+
+---
+
+## Technical stack
+
+| Layer | Technology |
+|---|---|
+| Frontend framework | SvelteKit 2 + TypeScript |
+| Styling | Tailwind CSS v4 |
+| UI components | shadcn-svelte, Lucide icons |
+| Backend / database | Self-hosted [Convex](https://convex.dev) (SQLite) |
+| Real-time | Convex reactive queries and subscriptions |
+| Authentication | [Clerk](https://clerk.com) |
+| File storage | Convex built-in object storage |
+| Infrastructure | Docker Compose, Traefik (TLS termination) |
+| CI/CD | GitHub Actions — SSH deploy on push to `main` |
