@@ -38,7 +38,7 @@ jobs:
             git checkout -f ${GITHUB_SHA}
 
             echo "Copying environment config"
-            cp ../../environments/convex.env .env
+            cp /home/deploy/environment/convex.env .env
           EOF
 
       - name: Deploy
