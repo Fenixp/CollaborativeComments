@@ -26,6 +26,7 @@ export const galleryApi = {
 	prepareUpload: api.images.prepareUpload,
 	finalizeUpload: api.images.finalizeUpload,
 	cleanupUpload: api.images.cleanupUpload,
+	deleteImage: (api as typeof api & { images: { deleteImage: any } }).images.deleteImage,
 	listImageComments: commentsApi.listImageComments,
 	createImageComment: commentsApi.createImageComment,
 	getCommentCountsByImageId: commentsApi.getCommentCountsByImageId,
@@ -41,6 +42,7 @@ export type GalleryImage = {
 	contentType: string;
 	sizeBytes: number;
 	uploaderName: string;
+	uploaderSubject: string;
 	createdAt: number;
 };
 
@@ -133,6 +135,10 @@ export function validateCommentSubmission(commentText: string, hasClient: boolea
 
 export function formatCommentError(error: unknown) {
 	return error instanceof Error ? error.message : 'Unable to save this comment right now.';
+}
+
+export function formatDeleteError(error: unknown) {
+	return error instanceof Error ? error.message : 'Unable to delete this image right now.';
 }
 
 export function getPopupPlacement(anchor: ImageCommentAnchor) {

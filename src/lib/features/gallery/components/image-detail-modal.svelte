@@ -10,6 +10,7 @@
 		FALLBACK_THUMBNAIL_URL,
 		formatBytes,
 		formatCommentError,
+		formatDeleteError,
 		galleryApi,
 		getPopupPlacement,
 		getReadableTextColor,
@@ -37,6 +38,9 @@
 	let isCommentsLoading = $state(true);
 	let isSubmittingComment = $state(false);
 	let commentError = $state<string | null>(null);
+	let isDeletingImage = $state(false);
+	let isConfirmingDelete = $state(false);
+	let deleteError = $state<string | null>(null);
 	let draftText = $state('');
 	let overlayState = $state<ImageCommentOverlayState>({ kind: 'idle' });
 	let commentInput = $state<HTMLInputElement | null>(null);
@@ -108,6 +112,26 @@
 			void client.mutation(galleryApi.clearCursor, { imageId: image.id });
 		}
 		onClose();
+	}
+
+	async function confirmDeleteImage() {
+		const client = getConvexClient();
+
+		if (!client || !$auth.isAuthenticated) {
+			return;
+		}
+
+		isDeletingImage = true;
+		deleteError = null;
+
+		try {
+			await client.mutation(galleryApi.deleteImage, { imageId: image.id });
+			onClose();
+		} catch (error) {
+			deleteError = formatDeleteError(error);
+			isDeletingImage = false;
+			isConfirmingDelete = false;
+		}
 	}
 
 	function handleStageMouseMove(event: MouseEvent) {
@@ -633,7 +657,47 @@
 				</div>
 			</div>
 
-			<div class="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+			<div class="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+				<div class="flex items-center gap-3">
+					{#if image.uploaderSubject === $auth.user?.subject}
+						{#if isConfirmingDelete}
+							<Button
+								size="sm"
+								class="gap-1.5 bg-rose-600 text-white hover:bg-rose-700"
+								onclick={confirmDeleteImage}
+								disabled={isDeletingImage}
+							>
+								{#if isDeletingImage}
+									<LoaderCircle class="h-4 w-4 animate-spin" />
+								{:else}
+									<Trash2 class="h-4 w-4" />
+								{/if}
+								Confirm delete
+							</Button>
+							<Button
+								variant="ghost"
+								size="sm"
+								onclick={() => { isConfirmingDelete = false; deleteError = null; }}
+								disabled={isDeletingImage}
+							>
+								Cancel
+							</Button>
+						{:else}
+							<Button
+								variant="ghost"
+								size="sm"
+								class="gap-1.5"
+								onclick={() => { isConfirmingDelete = true; deleteError = null; }}
+							>
+								<Trash2 class="h-4 w-4" />
+								Delete image
+							</Button>
+						{/if}
+						{#if deleteError}
+							<span class="text-sm text-rose-600">{deleteError}</span>
+						{/if}
+					{/if}
+				</div>
 				<Button onclick={closeModal}>OK</Button>
 			</div>
 		</Panel>

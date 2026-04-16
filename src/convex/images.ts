@@ -107,6 +107,7 @@ export const listGallery = queryGeneric({
 				contentType: image.contentType,
 				sizeBytes: image.sizeBytes,
 				uploaderName: image.uploaderName ?? image.uploaderEmail ?? 'Authenticated teammate',
+				uploaderSubject: image.uploaderSubject,
 				createdAt: image.finalizedAt ?? image.updatedAt ?? image._creationTime,
 			}))
 		);
@@ -261,6 +262,44 @@ export const cleanupUpload = mutationGeneric({
 		}
 
 		return { cleaned: true };
+	},
+});
+
+export const deleteImage = mutationGeneric({
+	args: {
+		imageId: v.id('images'),
+	},
+	handler: async (ctx, args) => {
+		const identity = await requireIdentity(ctx);
+		const image = await ctx.db.get(args.imageId);
+
+		if (!image || image.state !== 'ready') {
+			throw new Error('Image not found.');
+		}
+
+		if (image.uploaderTokenIdentifier !== identity.tokenIdentifier) {
+			throw new Error('You can only delete your own images.');
+		}
+
+		const comments = await ctx.db
+			.query('imageComments')
+			.withIndex('by_image', (q: any) => q.eq('imageId', args.imageId))
+			.collect();
+
+		await Promise.all(comments.map((comment) => ctx.db.delete(comment._id)));
+
+		const cursors = await ctx.db
+			.query('imageCursors')
+			.withIndex('by_image', (q: any) => q.eq('imageId', args.imageId))
+			.collect();
+
+		await Promise.all(cursors.map((cursor) => ctx.db.delete(cursor._id)));
+
+		if (image.storageId) {
+			await ctx.storage.delete(image.storageId);
+		}
+
+		await ctx.db.delete(args.imageId);
 	},
 });
 
