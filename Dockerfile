@@ -6,6 +6,7 @@ COPY package.json ./
 RUN npm install
 
 COPY . .
+RUN npx convex codegen
 RUN npm run build
 
 FROM node:22-bookworm-slim AS runtime
