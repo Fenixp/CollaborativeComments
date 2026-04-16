@@ -1,0 +1,51 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (for metadata only)
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Prepare deployment
+        run: |
+          ssh deploy@${{ secrets.DEPLOY_HOST }} << EOF
+            set -e
+            cd ~/apps/CollaborativeComments
+
+            echo "Resetting git state"
+            git reset --hard
+            git clean -fd
+
+            echo "Fetching latest changes"
+            git fetch origin --prune
+
+            echo "Checking out commit ${GITHUB_SHA}"
+            git checkout -f ${GITHUB_SHA}
+          EOF
+
+      - name: Deploy
+        run: |
+          ssh deploy@${{ secrets.DEPLOY_HOST }} << EOF
+            set -e
+            echo "Cleaning Docker build cache"
+            docker builder prune -f
+
+            cd ~/apps/CollaborativeComments
+            echo "Deploying CollaborativeComments"
+            docker compose up -d --build
+          EOF
