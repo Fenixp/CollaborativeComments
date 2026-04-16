@@ -5,9 +5,6 @@ node_modules/
 .svelte-kit/
 build/
 
-# Convex generated files
-src/convex/_generated/
-
 # Environment variables
 .env
 .env.*
