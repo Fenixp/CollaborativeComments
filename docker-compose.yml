@@ -1,0 +1,157 @@
+services:
+  frontend:
+    build:
+      context: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
+      PROTOCOL_HEADER: x-forwarded-proto
+      HOST_HEADER: x-forwarded-host
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:3000}
+      PUBLIC_CONVEX_URL: ${PUBLIC_CONVEX_URL:-http://localhost:3210}
+      PUBLIC_CONVEX_SITE_URL: ${PUBLIC_CONVEX_SITE_URL:-http://localhost:3211}
+      PUBLIC_CLERK_PUBLISHABLE_KEY: ${PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+    networks:
+      - cc_internal
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      # HTTP → HTTPS (apex)
+      - "traefik.http.routers.cc-frontend-http.rule=Host(`davidcomments.eu`)"
+      - "traefik.http.routers.cc-frontend-http.entrypoints=web"
+      - "traefik.http.routers.cc-frontend-http.middlewares=redirect-to-https"
+      # HTTP → HTTPS (www)
+      - "traefik.http.routers.cc-www-http.rule=Host(`www.davidcomments.eu`)"
+      - "traefik.http.routers.cc-www-http.entrypoints=web"
+      - "traefik.http.routers.cc-www-http.middlewares=redirect-to-https"
+      # HTTPS apex → service (cert covers both apex and www)
+      - "traefik.http.routers.cc-frontend.rule=Host(`davidcomments.eu`)"
+      - "traefik.http.routers.cc-frontend.entrypoints=websecure"
+      - "traefik.http.routers.cc-frontend.tls.certresolver=le"
+      - "traefik.http.routers.cc-frontend.tls.domains[0].main=davidcomments.eu"
+      - "traefik.http.routers.cc-frontend.tls.domains[0].sans=www.davidcomments.eu"
+      - "traefik.http.routers.cc-frontend.service=cc-frontend"
+      - "traefik.http.services.cc-frontend.loadbalancer.server.port=3000"
+      # HTTPS www → apex permanent redirect
+      - "traefik.http.routers.cc-www.rule=Host(`www.davidcomments.eu`)"
+      - "traefik.http.routers.cc-www.entrypoints=websecure"
+      - "traefik.http.routers.cc-www.tls.certresolver=le"
+      - "traefik.http.routers.cc-www.middlewares=cc-www-to-apex"
+      - "traefik.http.middlewares.cc-www-to-apex.redirectregex.regex=^https://www\\.davidcomments\\.eu(.*)"
+      - "traefik.http.middlewares.cc-www-to-apex.redirectregex.replacement=https://davidcomments.eu$${1}"
+      - "traefik.http.middlewares.cc-www-to-apex.redirectregex.permanent=true"
+    depends_on:
+      backend:
+        condition: service_healthy
+      convex-sync:
+        condition: service_completed_successfully
+
+  backend:
+    image: ghcr.io/get-convex/convex-backend:latest
+    restart: unless-stopped
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "127.0.0.1:${CONVEX_PORT:-3210}:3210"
+      - "127.0.0.1:${CONVEX_SITE_PORT:-3211}:3211"
+    volumes:
+      - convex_data:/convex/data
+    environment:
+      INSTANCE_NAME: ${CONVEX_INSTANCE_NAME:-collaborative-comments}
+      INSTANCE_SECRET: ${CONVEX_INSTANCE_SECRET:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      CONVEX_CLOUD_ORIGIN: ${PUBLIC_CONVEX_URL:-http://localhost:3210}
+      CONVEX_SITE_ORIGIN: ${PUBLIC_CONVEX_SITE_URL:-http://localhost:3211}
+      CLERK_JWT_ISSUER_DOMAIN: ${CLERK_JWT_ISSUER_DOMAIN:-}
+      DISABLE_BEACON: ${DISABLE_BEACON:-true}
+      DISABLE_METRICS_ENDPOINT: ${DISABLE_METRICS_ENDPOINT:-true}
+      DO_NOT_REQUIRE_SSL: ${DO_NOT_REQUIRE_SSL:-true}
+      RUST_LOG: ${RUST_LOG:-info}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3210/version"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks:
+      - cc_internal
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      # HTTP → HTTPS
+      - "traefik.http.routers.cc-backend-http.rule=Host(`convex.davidcomments.eu`)"
+      - "traefik.http.routers.cc-backend-http.entrypoints=web"
+      - "traefik.http.routers.cc-backend-http.middlewares=redirect-to-https"
+      # HTTPS → Convex API + WebSocket (port 3210)
+      - "traefik.http.routers.cc-backend.rule=Host(`convex.davidcomments.eu`)"
+      - "traefik.http.routers.cc-backend.entrypoints=websecure"
+      - "traefik.http.routers.cc-backend.tls.certresolver=le"
+      - "traefik.http.routers.cc-backend.service=cc-backend"
+      - "traefik.http.services.cc-backend.loadbalancer.server.port=3210"
+
+  convex-sync:
+    image: node:22-bookworm-slim
+    restart: "no"
+    working_dir: /app
+    volumes:
+      - ./:/app
+    environment:
+      CONVEX_SELF_HOSTED_URL: http://backend:3210
+      CONVEX_SELF_HOSTED_ADMIN_KEY: ${CONVEX_SELF_HOSTED_ADMIN_KEY:-}
+      CONVEX_TMPDIR: /app/.convex-tmp
+      CLERK_JWT_ISSUER_DOMAIN: ${CLERK_JWT_ISSUER_DOMAIN:-}
+    command: >-
+      sh -lc "mkdir -p /app/.convex-tmp
+      && npm install
+      && npx convex env set CLERK_JWT_ISSUER_DOMAIN \"$CLERK_JWT_ISSUER_DOMAIN\"
+      && npx convex deploy"
+    networks:
+      - cc_internal
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  dashboard:
+    image: ghcr.io/get-convex/convex-dashboard:latest
+    restart: unless-stopped
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "127.0.0.1:${CONVEX_DASHBOARD_PORT:-6791}:6791"
+    environment:
+      NEXT_PUBLIC_DEPLOYMENT_URL: ${PUBLIC_CONVEX_URL:-http://localhost:3210}
+      NEXT_PUBLIC_LOAD_MONACO_INTERNALLY: ${NEXT_PUBLIC_LOAD_MONACO_INTERNALLY:-true}
+    networks:
+      - cc_internal
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      # HTTP → HTTPS
+      - "traefik.http.routers.cc-dashboard-http.rule=Host(`dashboard.davidcomments.eu`)"
+      - "traefik.http.routers.cc-dashboard-http.entrypoints=web"
+      - "traefik.http.routers.cc-dashboard-http.middlewares=redirect-to-https"
+      # HTTPS → Convex dashboard
+      - "traefik.http.routers.cc-dashboard.rule=Host(`dashboard.davidcomments.eu`)"
+      - "traefik.http.routers.cc-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.cc-dashboard.tls.certresolver=le"
+      - "traefik.http.routers.cc-dashboard.service=cc-dashboard"
+      - "traefik.http.services.cc-dashboard.loadbalancer.server.port=6791"
+    depends_on:
+      backend:
+        condition: service_healthy
+      convex-sync:
+        condition: service_completed_successfully
+
+volumes:
+  convex_data:
+
+networks:
+  cc_internal:
+  traefik:
+    external: true

@@ -1,0 +1,35 @@
+{
+  "name": "collaborative-comments",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "svelte-kit sync && vite build",
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "convex:dev": "convex dev",
+    "convex:deploy": "convex deploy"
+  },
+  "dependencies": {
+    "@clerk/clerk-js": "^5.56.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "convex": "^1.22.0",
+    "convex-svelte": "^0.0.12",
+    "lucide-svelte": "^0.468.0",
+    "tailwind-merge": "^2.5.5"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-node": "^5.2.10",
+    "@sveltejs/kit": "^2.16.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@tailwindcss/vite": "^4.0.0",
+    "shadcn-svelte": "^0.14.0",
+    "svelte": "^5.16.0",
+    "svelte-check": "^4.1.1",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}

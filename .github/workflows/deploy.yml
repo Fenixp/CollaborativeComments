@@ -36,6 +36,9 @@ jobs:
 
             echo "Checking out commit ${GITHUB_SHA}"
             git checkout -f ${GITHUB_SHA}
+
+            echo "Copying environment config"
+            cp ../../environments/convex.env .env
           EOF
 
       - name: Deploy
@@ -46,6 +49,9 @@ jobs:
             docker builder prune -f
 
             cd ~/apps/CollaborativeComments
-            echo "Deploying CollaborativeComments"
+            echo "Starting services"
             docker compose up -d --build
+
+            echo "Syncing Convex schema and functions"
+            docker compose run --rm convex-sync
           EOF
