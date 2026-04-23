@@ -32,7 +32,26 @@
 
 	type TimeoutHandle = ReturnType<typeof setTimeout>;
 	type IntervalHandle = ReturnType<typeof setInterval>;
+	type QueuedCursorPosition = Pick<RemoteCursor, 'x' | 'y' | 'updatedAt'>;
+	type AnimatedRemoteCursor = {
+		userSubject: string;
+		colorToken: RemoteCursor['colorToken'];
+		colorValue: string;
+		renderedX: number;
+		renderedY: number;
+		lastServerUpdatedAt: number;
+		lastRenderedUpdatedAt: number;
+		queue: QueuedCursorPosition[];
+		activeTarget: QueuedCursorPosition | null;
+		segmentStartX: number;
+		segmentStartY: number;
+		segmentStartedAt: number;
+		segmentDurationMs: number;
+	};
 	const CURSOR_UPDATE_INTERVAL_MS = 250;
+	const CURSOR_STALE_AFTER_MS = 2000;
+	const MIN_CURSOR_SEGMENT_MS = 25;
+	const MAX_CURSOR_SEGMENT_MS = CURSOR_UPDATE_INTERVAL_MS;
 
 	let comments = $state<GalleryImageComment[]>([]);
 	let isCommentsLoading = $state(true);
@@ -52,20 +71,17 @@
 
 	// Cursor state
 	let remoteCursors = $state<RemoteCursor[]>([]);
+	let displayedRemoteCursors = $state<RemoteCursor[]>([]);
 	let unsubscribeCursors: (() => void) | null = null;
 	let cursorInterval: IntervalHandle | null = null;
+	let cursorAnimationFrame: number | null = null;
 	let latestCursorX = 0;
 	let latestCursorY = 0;
 	let isCursorOnImage = false;
 	let hasPendingCursorUpdate = false;
 	let lastCursorPublishedAt = 0;
 	let currentTime = $state(Date.now());
-	let animatedCursorSubjects = $state<Record<string, boolean>>({});
-	const visibleRemoteCursors = $derived(
-		remoteCursors.filter(
-			(cursor) => cursor.userSubject !== $auth.user?.subject && currentTime - cursor.updatedAt < 2000,
-		),
-	);
+	let animatedRemoteCursors = $state<Record<string, AnimatedRemoteCursor>>({});
 
 	async function publishCursorPosition() {
 		const client = getConvexClient();
@@ -85,25 +101,165 @@
 	}
 
 	function getCursorStyle(cursor: RemoteCursor) {
-		const transition = animatedCursorSubjects[cursor.userSubject]
-			? `left ${CURSOR_UPDATE_INTERVAL_MS}ms ease, top ${CURSOR_UPDATE_INTERVAL_MS}ms ease`
-			: 'none';
-
-		return `left: ${cursor.x * 100}%; top: ${cursor.y * 100}%; transition: ${transition}; will-change: left, top;`;
+		return `left: ${cursor.x * 100}%; top: ${cursor.y * 100}%; will-change: left, top;`;
 	}
 
-	function areAnimatedSubjectMapsEqual(
-		left: Record<string, boolean>,
-		right: Record<string, boolean>,
+	function isSameCursorPoint(
+		left: Pick<RemoteCursor, 'x' | 'y'>,
+		right: Pick<RemoteCursor, 'x' | 'y'>,
 	) {
-		const leftKeys = Object.keys(left);
-		const rightKeys = Object.keys(right);
+		return Math.abs(left.x - right.x) < 0.0001 && Math.abs(left.y - right.y) < 0.0001;
+	}
 
-		if (leftKeys.length !== rightKeys.length) {
-			return false;
+	function clampCursorSegmentDuration(durationMs: number) {
+		return Math.min(Math.max(durationMs, MIN_CURSOR_SEGMENT_MS), MAX_CURSOR_SEGMENT_MS);
+	}
+
+	function rebuildDisplayedRemoteCursors() {
+		displayedRemoteCursors = Object.values(animatedRemoteCursors)
+			.filter((cursor) => currentTime - cursor.lastServerUpdatedAt < CURSOR_STALE_AFTER_MS)
+			.map((cursor) => ({
+				userSubject: cursor.userSubject,
+				x: cursor.renderedX,
+				y: cursor.renderedY,
+				updatedAt: cursor.lastServerUpdatedAt,
+				colorToken: cursor.colorToken,
+				colorValue: cursor.colorValue,
+			}));
+	}
+
+	function ensureCursorAnimationLoop() {
+		if (!browser || cursorAnimationFrame !== null) {
+			return;
 		}
 
-		return leftKeys.every((key) => left[key] === right[key]);
+		const hasQueuedMotion = Object.values(animatedRemoteCursors).some(
+			(cursor) => cursor.activeTarget !== null || cursor.queue.length > 0,
+		);
+
+		if (!hasQueuedMotion) {
+			return;
+		}
+
+		cursorAnimationFrame = requestAnimationFrame(stepAnimatedCursors);
+	}
+
+	function stopCursorAnimationLoop() {
+		if (cursorAnimationFrame !== null) {
+			cancelAnimationFrame(cursorAnimationFrame);
+			cursorAnimationFrame = null;
+		}
+	}
+
+	function stepAnimatedCursors(timestamp: number) {
+		cursorAnimationFrame = null;
+		let hasMoreMotion = false;
+
+		for (const cursor of Object.values(animatedRemoteCursors)) {
+			if (cursor.activeTarget === null && cursor.queue.length > 0) {
+				const [nextTarget, ...remainingQueue] = cursor.queue;
+				cursor.queue = remainingQueue;
+				cursor.activeTarget = nextTarget;
+				cursor.segmentStartX = cursor.renderedX;
+				cursor.segmentStartY = cursor.renderedY;
+				cursor.segmentStartedAt = timestamp;
+				cursor.segmentDurationMs = clampCursorSegmentDuration(
+					nextTarget.updatedAt - cursor.lastRenderedUpdatedAt,
+				);
+			}
+
+			if (cursor.activeTarget === null) {
+				continue;
+			}
+
+			const elapsed = timestamp - cursor.segmentStartedAt;
+			const progress = Math.min(elapsed / cursor.segmentDurationMs, 1);
+			const easedProgress = 1 - (1 - progress) * (1 - progress);
+
+			cursor.renderedX =
+				cursor.segmentStartX + (cursor.activeTarget.x - cursor.segmentStartX) * easedProgress;
+			cursor.renderedY =
+				cursor.segmentStartY + (cursor.activeTarget.y - cursor.segmentStartY) * easedProgress;
+
+			if (progress >= 1) {
+				cursor.renderedX = cursor.activeTarget.x;
+				cursor.renderedY = cursor.activeTarget.y;
+				cursor.lastRenderedUpdatedAt = cursor.activeTarget.updatedAt;
+				cursor.activeTarget = null;
+			}
+
+			if (cursor.activeTarget !== null || cursor.queue.length > 0) {
+				hasMoreMotion = true;
+			}
+		}
+
+		rebuildDisplayedRemoteCursors();
+
+		if (hasMoreMotion) {
+			ensureCursorAnimationLoop();
+		}
+	}
+
+	function syncAnimatedRemoteCursors() {
+		const currentUserSubject = $auth.user?.subject;
+		const incomingRemoteCursors = remoteCursors.filter(
+			(cursor) => cursor.userSubject !== currentUserSubject,
+		);
+		const incomingSubjects = new Set(incomingRemoteCursors.map((cursor) => cursor.userSubject));
+
+		for (const cursor of incomingRemoteCursors) {
+			const existing = animatedRemoteCursors[cursor.userSubject];
+
+			if (!existing) {
+				animatedRemoteCursors[cursor.userSubject] = {
+					userSubject: cursor.userSubject,
+					colorToken: cursor.colorToken,
+					colorValue: cursor.colorValue,
+					renderedX: cursor.x,
+					renderedY: cursor.y,
+					lastServerUpdatedAt: cursor.updatedAt,
+					lastRenderedUpdatedAt: cursor.updatedAt,
+					queue: [],
+					activeTarget: null,
+					segmentStartX: cursor.x,
+					segmentStartY: cursor.y,
+					segmentStartedAt: 0,
+					segmentDurationMs: CURSOR_UPDATE_INTERVAL_MS,
+				};
+				continue;
+			}
+
+			existing.colorToken = cursor.colorToken;
+			existing.colorValue = cursor.colorValue;
+			existing.lastServerUpdatedAt = cursor.updatedAt;
+
+			const latestQueuedTarget = existing.queue.at(-1) ?? existing.activeTarget;
+			if (latestQueuedTarget && isSameCursorPoint(latestQueuedTarget, cursor)) {
+				continue;
+			}
+
+			if (!latestQueuedTarget && isSameCursorPoint({ x: existing.renderedX, y: existing.renderedY }, cursor)) {
+				continue;
+			}
+
+			existing.queue = [
+				...existing.queue,
+				{
+					x: cursor.x,
+					y: cursor.y,
+					updatedAt: cursor.updatedAt,
+				},
+			];
+		}
+
+		for (const subject of Object.keys(animatedRemoteCursors)) {
+			if (!incomingSubjects.has(subject)) {
+				delete animatedRemoteCursors[subject];
+			}
+		}
+
+		rebuildDisplayedRemoteCursors();
+		ensureCursorAnimationLoop();
 	}
 
 	function closeModal() {
@@ -374,40 +530,13 @@
 	});
 
 	$effect(() => {
-		const nextAnimatedSubjects = { ...animatedCursorSubjects };
-		let shouldPromoteNewSubjects = false;
+		remoteCursors;
+		syncAnimatedRemoteCursors();
+	});
 
-		for (const cursor of visibleRemoteCursors) {
-			if (!(cursor.userSubject in nextAnimatedSubjects)) {
-				nextAnimatedSubjects[cursor.userSubject] = false;
-				shouldPromoteNewSubjects = true;
-			}
-		}
-
-		const visibleSubjects = new Set(visibleRemoteCursors.map((cursor) => cursor.userSubject));
-		for (const subject of Object.keys(nextAnimatedSubjects)) {
-			if (!visibleSubjects.has(subject)) {
-				delete nextAnimatedSubjects[subject];
-			}
-		}
-
-		if (!areAnimatedSubjectMapsEqual(animatedCursorSubjects, nextAnimatedSubjects)) {
-			animatedCursorSubjects = nextAnimatedSubjects;
-		}
-
-		if (!shouldPromoteNewSubjects || !browser) {
-			return;
-		}
-
-		const frame = requestAnimationFrame(() => {
-			animatedCursorSubjects = Object.fromEntries(
-				Object.entries(nextAnimatedSubjects).map(([subject]) => [subject, true]),
-			);
-		});
-
-		return () => {
-			cancelAnimationFrame(frame);
-		};
+	$effect(() => {
+		currentTime;
+		rebuildDisplayedRemoteCursors();
 	});
 
 	// Broadcast cursor position at the configured interval
@@ -437,6 +566,7 @@
 		}, CURSOR_UPDATE_INTERVAL_MS);
 
 		return () => {
+			stopCursorAnimationLoop();
 			if (cursorInterval) {
 				clearInterval(cursorInterval);
 				cursorInterval = null;
@@ -531,7 +661,7 @@
 							></button>
 						{/each}
 
-						{#each visibleRemoteCursors as cursor (cursor.userSubject)}
+						{#each displayedRemoteCursors as cursor (cursor.userSubject)}
 							<div
 								class="pointer-events-none absolute"
 								style={getCursorStyle(cursor)}
